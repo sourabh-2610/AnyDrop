@@ -1,0 +1,280 @@
+/* ─── AnyDrop Cosmic Dark Glassmorphism Design System ─────────────────────────── */
+:root {
+  --bg-deep:        #06090E;
+  --bg-surface:     #0B101B;
+  --bg-card:        rgba(15, 23, 42, 0.75);
+  --bg-card-hover:  rgba(30, 41, 59, 0.85);
+  --bg-muted:       rgba(255, 255, 255, 0.04);
+  --bg-subtle:      rgba(255, 255, 255, 0.08);
+
+  --emerald:        #10B981;
+  --emerald-light:  #34D399;
+  --emerald-glow:   rgba(16, 185, 129, 0.4);
+  --cyan:           #06B6D4;
+  --cyan-light:     #38BDF8;
+  --cyan-glow:      rgba(6, 182, 212, 0.35);
+  --indigo:         #6366F1;
+  --amber:          #F59E0B;
+  --rose:           #F43F5E;
+
+  --text-main:      #F8FAFC;
+  --text-muted:     #94A3B8;
+  --text-dim:       #64748B;
+  --border-glass:   rgba(255, 255, 255, 0.08);
+  --border-hover:   rgba(16, 185, 129, 0.4);
+
+  --shadow-card:    0 20px 40px -15px rgba(0, 0, 0, 0.7), 0 0 1px 1px rgba(255, 255, 255, 0.06);
+  --shadow-glow:    0 0 35px rgba(16, 185, 129, 0.28);
+}
+
+html, body {
+  background-color: var(--bg-deep);
+  color: var(--text-main);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+}
+
+/* Glassmorphism Panel */
+.glass-panel {
+  background: var(--bg-card);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--border-glass);
+  border-radius: 28px;
+  box-shadow: var(--shadow-card);
+  position: relative;
+  overflow: hidden;
+}
+
+.glass-panel::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(52, 211, 153, 0.3), rgba(6, 182, 212, 0.3), transparent);
+  pointer-events: none;
+}
+
+/* Glowing Buttons */
+.btn-primary-glow {
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+  color: #FFFFFF;
+  font-weight: 600;
+  border-radius: 16px;
+  padding: 0.8rem 1.6rem;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: 0 4px 20px rgba(16, 185, 129, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  font-family: inherit;
+}
+.btn-primary-glow:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(16, 185, 129, 0.6);
+  background: linear-gradient(135deg, #34D399 0%, #10B981 100%);
+}
+.btn-primary-glow:active {
+  transform: translateY(0);
+}
+.btn-primary-glow:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-glass {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+  border: 1px solid var(--border-glass);
+  backdrop-filter: blur(12px);
+  border-radius: 14px;
+  padding: 0.65rem 1.25rem;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+.btn-glass:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.16);
+  transform: translateY(-1px);
+}
+
+/* ─── Ultra-Modern Cool Holographic Radar Animations ───────────── */
+@keyframes radar-rotate {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes radar-counter-rotate {
+  from { transform: rotate(360deg); }
+  to   { transform: rotate(0deg); }
+}
+
+@keyframes sonar-wave-1 {
+  0%   { transform: scale(0.35); opacity: 0.9; }
+  60%  { opacity: 0.4; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+@keyframes sonar-wave-2 {
+  0%   { transform: scale(0.35); opacity: 0; }
+  25%  { opacity: 0.8; }
+  75%  { opacity: 0.3; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+@keyframes sonar-wave-3 {
+  0%   { transform: scale(0.35); opacity: 0; }
+  50%  { opacity: 0.8; }
+  85%  { opacity: 0.3; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+@keyframes equalizer-dance {
+  0%, 100% { height: 4px; }
+  50%      { height: 18px; }
+}
+
+@keyframes laser-sweep-glow {
+  0%   { transform: translateX(-100%); opacity: 0.3; }
+  50%  { opacity: 1; }
+  100% { transform: translateX(100%); opacity: 0.3; }
+}
+
+/* Dual-laser Sonar Beam */
+.hologram-radar-beam {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    rgba(16, 185, 129, 0.45) 0deg,
+    rgba(6, 182, 212, 0.25) 20deg,
+    rgba(16, 185, 129, 0.08) 50deg,
+    transparent 80deg,
+    transparent 360deg
+  );
+  animation: radar-rotate 3.6s linear infinite;
+  pointer-events: none;
+}
+
+.hologram-radar-beam::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 50%;
+  height: 2.5px;
+  background: linear-gradient(90deg, transparent 0%, #10B981 60%, #A7F3D0 90%, #FFFFFF 100%);
+  box-shadow: 0 0 12px #34D399, 0 0 24px rgba(16, 185, 129, 0.8);
+  transform-origin: 0% 50%;
+  transform: translateY(-50%);
+}
+
+/* Rotating Energy Rings around Center Node */
+.energy-ring-outer {
+  position: absolute;
+  inset: -10px;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(52, 211, 153, 0.5);
+  animation: radar-rotate 12s linear infinite;
+}
+
+.energy-ring-inner {
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 1px dotted rgba(56, 189, 248, 0.6);
+  animation: radar-counter-rotate 8s linear infinite;
+}
+
+/* Sonar shockwaves */
+.sonar-shockwave-1 {
+  position: absolute;
+  border-radius: 50%;
+  border: 1.5px solid rgba(52, 211, 153, 0.6);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.35);
+  animation: sonar-wave-1 4s cubic-bezier(0.2, 0.8, 0.4, 1) infinite;
+  pointer-events: none;
+}
+
+.sonar-shockwave-2 {
+  position: absolute;
+  border-radius: 50%;
+  border: 1.5px solid rgba(6, 182, 212, 0.5);
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.3);
+  animation: sonar-wave-2 4s cubic-bezier(0.2, 0.8, 0.4, 1) infinite;
+  pointer-events: none;
+}
+
+.sonar-shockwave-3 {
+  position: absolute;
+  border-radius: 50%;
+  border: 1.5px solid rgba(99, 102, 241, 0.4);
+  animation: sonar-wave-3 4s cubic-bezier(0.2, 0.8, 0.4, 1) infinite;
+  pointer-events: none;
+}
+
+/* Telemetry Equalizer Bars */
+.equalizer-bar {
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #34D399, #06B6D4);
+  animation: equalizer-dance 1.4s ease-in-out infinite;
+}
+
+/* Status Indicators */
+.dot-live-green {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #10B981;
+  box-shadow: 0 0 10px #10B981;
+  display: inline-block;
+}
+
+.dot-live-amber {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #F59E0B;
+  box-shadow: 0 0 10px #F59E0B;
+  display: inline-block;
+  animation: ad-pulse 1.2s infinite;
+}
+
+.dot-live-red {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #EF4444;
+  box-shadow: 0 0 10px #EF4444;
+  display: inline-block;
+}
+
+@keyframes ad-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.85); }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 999px; }
