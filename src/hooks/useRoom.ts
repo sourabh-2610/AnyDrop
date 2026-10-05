@@ -82,13 +82,24 @@ export function useRoom(myDevice: MyDevice | null): {
   const currentRoomRef = useRef<string | null>(null);
 
   const joinRoom = useCallback((roomId: string) => {
-    currentRoomRef.current = roomId;
-    setRoom(prev => ({ ...prev, roomId }));
+    if (!roomId) return;
+    const cleanId = roomId.trim().toUpperCase();
+    currentRoomRef.current = cleanId;
+    setRoom(prev => ({ ...prev, roomId: cleanId, peers: [], joined: false }));
+
+    if (typeof window !== "undefined") {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("room", cleanId);
+        window.history.replaceState({}, "", url.toString());
+      } catch {}
+    }
+
     if (!myDevice) return;
     if (wsStatus !== "connected") return; // will auto-join when WS connects
     send({
       type:   "JOIN_ROOM",
-      roomId,
+      roomId: cleanId,
       device: { id: myDevice.id, name: myDevice.name, type: myDevice.type },
     });
   }, [myDevice, send, wsStatus]);
@@ -107,8 +118,12 @@ export function useRoom(myDevice: MyDevice | null): {
   }, [wsStatus, myDevice, send]);
 
   const leaveRoom = useCallback(() => {
+    if (myDevice && currentRoomRef.current) {
+      send({ type: "LEAVE_ROOM", roomId: currentRoomRef.current, device: { id: myDevice.id, name: myDevice.name, type: myDevice.type } });
+    }
+    currentRoomRef.current = null;
     setRoom({ roomId: null, peers: [], wsStatus: room.wsStatus, joined: false });
-  }, [room.wsStatus]);
+  }, [myDevice, send, room.wsStatus]);
 
   const createRoom = useCallback((): string => {
     const code = generateRoomCode();

@@ -16,19 +16,21 @@ export type PeerStatus = "idle" | "connecting" | "connected" | "failed" | "close
 export function useWebRTC(
   myId:       string | undefined,
   sendSignal: (msg: SignalingMsg) => void,
-  onDataChannel: (dc: RTCDataChannel) => void,
-  onMessage:     (data: string | ArrayBuffer) => void
+  onDataChannel: (dc: RTCDataChannel, peerId?: string) => void,
+  onMessage:     (data: string | ArrayBuffer, peerId?: string) => void
 ): {
   peerStatus:  PeerStatus;
   dataChannel: RTCDataChannel | null;
+  getPeerDataChannel: (peerId: string) => RTCDataChannel | null;
   initiateCall:(targetId: string) => Promise<void>;
   onSignal:    (msg: SignalingMsg) => void;
-  hangup:      () => void;
+  hangup:      (targetId?: string) => void;
 } {
-  const pcRef             = useRef<RTCPeerConnection | null>(null);
-  const dcRef             = useRef<RTCDataChannel | null>(null);
-  const targetIdRef       = useRef<string | null>(null);
-  const pendingIceRef     = useRef<RTCIceCandidateInit[]>([]);
+  const pcsRef             = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const dcsRef             = useRef<Map<string, RTCDataChannel>>(new Map());
+  const pendingIceRef     = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+  const lastActiveDcRef   = useRef<RTCDataChannel | null>(null);
+
   // Stable refs for callbacks so we don't recreate setupDataChannel on every render
   const onDataChannelRef  = useRef(onDataChannel);
   const onMessageRef      = useRef(onMessage);
@@ -38,127 +40,161 @@ export function useWebRTC(
   const [peerStatus,  setPeerStatus]  = useState<PeerStatus>("idle");
   const [dataChannel, setDataChannel] = useState<RTCDataChannel | null>(null);
 
+  const getPeerDataChannel = useCallback((peerId: string) => {
+    return dcsRef.current.get(peerId) || null;
+  }, []);
+
   // ── Cleanup ────────────────────────────────────────────────────────────────
-  const hangup = useCallback(() => {
-    try { dcRef.current?.close(); } catch {}
-    try { pcRef.current?.close(); } catch {}
-    dcRef.current    = null;
-    pcRef.current    = null;
-    targetIdRef.current = null;
-    pendingIceRef.current = [];
-    setDataChannel(null);
-    setPeerStatus("idle");
+  const hangup = useCallback((targetId?: string) => {
+    if (targetId) {
+      try { dcsRef.current.get(targetId)?.close(); } catch {}
+      try { pcsRef.current.get(targetId)?.close(); } catch {}
+      dcsRef.current.delete(targetId);
+      pcsRef.current.delete(targetId);
+      pendingIceRef.current.delete(targetId);
+      if (lastActiveDcRef.current === dcsRef.current.get(targetId)) {
+        lastActiveDcRef.current = null;
+        setDataChannel(null);
+      }
+    } else {
+      for (const [id, dc] of dcsRef.current.entries()) {
+        try { dc.close(); } catch {}
+      }
+      for (const [id, pc] of pcsRef.current.entries()) {
+        try { pc.close(); } catch {}
+      }
+      dcsRef.current.clear();
+      pcsRef.current.clear();
+      pendingIceRef.current.clear();
+      lastActiveDcRef.current = null;
+      setDataChannel(null);
+      setPeerStatus("idle");
+    }
   }, []);
 
   useEffect(() => () => { hangup(); }, [hangup]);
 
-  const flushPendingIce = async (pc: RTCPeerConnection) => {
-    if (pendingIceRef.current.length > 0) {
-      for (const cand of pendingIceRef.current) {
+  const flushPendingIce = async (targetId: string, pc: RTCPeerConnection) => {
+    const list = pendingIceRef.current.get(targetId);
+    if (list && list.length > 0) {
+      for (const cand of list) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(cand));
         } catch (e) {
-          console.warn("[WebRTC] Pending ICE add error:", e);
+          console.warn(`[WebRTC] Pending ICE add error for ${targetId}:`, e);
         }
       }
-      pendingIceRef.current = [];
+      pendingIceRef.current.delete(targetId);
     }
   };
 
   // ── DataChannel setup ──────────────────────────────────────────────────────
-  const setupDataChannel = useCallback((dc: RTCDataChannel) => {
+  const setupDataChannel = useCallback((dc: RTCDataChannel, peerId: string) => {
     dc.binaryType = "arraybuffer";
-    dcRef.current = dc;
+    dcsRef.current.set(peerId, dc);
+    lastActiveDcRef.current = dc;
 
     const handleOpen = () => {
-      console.log("[WebRTC] DataChannel open & ready!");
+      console.log(`[WebRTC] DataChannel open & ready for peer: ${peerId}!`);
       setDataChannel(dc);
       setPeerStatus("connected");
-      onDataChannelRef.current(dc);
+      onDataChannelRef.current(dc, peerId);
     };
 
-    // If channel is already open (very common on callee), fire immediately!
     if (dc.readyState === "open") {
       handleOpen();
     } else {
       dc.onopen = handleOpen;
     }
 
-    dc.onmessage = (e) => onMessageRef.current(e.data);
-    dc.onerror = (e) => console.error("[DC] Error:", e);
+    dc.onmessage = (e) => onMessageRef.current(e.data, peerId);
+    dc.onerror = (e) => console.error(`[DC ${peerId}] Error:`, e);
     dc.onclose = () => {
-      console.log("[WebRTC] DataChannel closed");
-      setDataChannel(null);
-      setPeerStatus(prev => prev === "closed" ? "closed" : "idle");
+      console.log(`[WebRTC] DataChannel closed for ${peerId}`);
+      dcsRef.current.delete(peerId);
+      if (lastActiveDcRef.current === dc) {
+        const remaining = Array.from(dcsRef.current.values())[0] || null;
+        lastActiveDcRef.current = remaining;
+        setDataChannel(remaining);
+      }
+      if (dcsRef.current.size === 0) {
+        setPeerStatus("idle");
+      }
     };
   }, []);
 
-  // ── Create RTCPeerConnection ───────────────────────────────────────────────
-  const createPc = useCallback((): RTCPeerConnection => {
+  // ── Create RTCPeerConnection for a specific target ─────────────────────────
+  const createPc = useCallback((targetId: string): RTCPeerConnection => {
+    // If existing PC is open and working, close it to start fresh
+    const existingPc = pcsRef.current.get(targetId);
+    if (existingPc) {
+      try { existingPc.close(); } catch {}
+    }
+
     const pc = new RTCPeerConnection({
       iceServers: ICE_SERVERS,
       iceCandidatePoolSize: 10,
     });
 
     pc.onicecandidate = ({ candidate }) => {
-      if (candidate && myId && targetIdRef.current) {
+      if (candidate && myId && targetId) {
         sendSignal({
           type:      "ICE_CANDIDATE",
           fromId:    myId,
-          toId:      targetIdRef.current,
+          toId:      targetId,
           candidate: candidate.toJSON ? candidate.toJSON() : {
             candidate: candidate.candidate,
             sdpMid: candidate.sdpMid,
             sdpMLineIndex: candidate.sdpMLineIndex,
           },
-          targetId:  targetIdRef.current,
+          targetId:  targetId,
         } as any);
       }
     };
 
     pc.onconnectionstatechange = () => {
       const s = pc.connectionState;
-      console.log(`[WebRTC] Connection state: ${s}`);
+      console.log(`[WebRTC ${targetId}] Connection state: ${s}`);
       if (s === "connected")    setPeerStatus("connected");
-      if (s === "failed")       { console.warn("[WebRTC] PC failed"); setPeerStatus("failed"); }
+      if (s === "failed")       { console.warn(`[WebRTC ${targetId}] PC failed`); }
       if (s === "disconnected") setPeerStatus("connecting");
-      if (s === "closed")       setPeerStatus("closed");
+      if (s === "closed")       { pcsRef.current.delete(targetId); }
     };
 
     pc.oniceconnectionstatechange = () => {
       const is = pc.iceConnectionState;
-      console.log(`[WebRTC] ICE state: ${is}`);
+      console.log(`[WebRTC ${targetId}] ICE state: ${is}`);
       if (is === "connected" || is === "completed") setPeerStatus("connected");
-      if (is === "failed") {
-        console.warn("[WebRTC] ICE failed");
-        setPeerStatus("failed");
-      }
     };
 
     // Receiving side: handle incoming DataChannel
     pc.ondatachannel = ({ channel }) => {
-      console.log(`[WebRTC] Received incoming DataChannel (state: ${channel.readyState})`);
-      setupDataChannel(channel);
+      console.log(`[WebRTC ${targetId}] Received incoming DataChannel (state: ${channel.readyState})`);
+      setupDataChannel(channel, targetId);
     };
 
-    pcRef.current = pc;
+    pcsRef.current.set(targetId, pc);
     return pc;
   }, [myId, sendSignal, setupDataChannel]);
 
-  // ── Caller: initiate offer ─────────────────────────────────────────────────
+  // ── Caller: initiate offer to a target ─────────────────────────────────────
   const initiateCall = useCallback(async (targetId: string) => {
-    if (!myId) return;
-    hangup();
-    targetIdRef.current = targetId;
-    setPeerStatus("connecting");
+    if (!myId || !targetId) return;
 
-    const pc = createPc();
+    // If an open data channel already exists for this peer, we're already connected!
+    const existingDc = dcsRef.current.get(targetId);
+    if (existingDc && existingDc.readyState === "open") {
+      return;
+    }
+
+    setPeerStatus("connecting");
+    const pc = createPc(targetId);
 
     // Create DataChannel on the caller side
     const dc = pc.createDataChannel("anydrop-transfer", {
       ordered: true,
     });
-    setupDataChannel(dc);
+    setupDataChannel(dc, targetId);
 
     try {
       const offer = await pc.createOffer();
@@ -176,79 +212,75 @@ export function useWebRTC(
       } as any);
       console.log(`[WebRTC] Sent OFFER to ${targetId}`);
     } catch (err) {
-      console.error("[WebRTC] Failed to create offer:", err);
+      console.error(`[WebRTC] Failed to create offer to ${targetId}:`, err);
       setPeerStatus("failed");
     }
-  }, [myId, sendSignal, createPc, setupDataChannel, hangup]);
+  }, [myId, sendSignal, createPc, setupDataChannel]);
 
   // ── Handle incoming signaling messages ────────────────────────────────────
   const onSignal = useCallback(async (msg: SignalingMsg) => {
     if (!myId) return;
     const senderId = msg.fromId || (msg as any).fromPeerId;
+    if (!senderId) return;
 
     switch (msg.type) {
       case "OFFER": {
-        // We are the callee — preserve any ICE candidates already received
-        const savedIce = [...pendingIceRef.current];
-        hangup();
-        pendingIceRef.current = savedIce;
-        targetIdRef.current = senderId ?? null;
         setPeerStatus("connecting");
-
         try {
-          const pc = createPc();
+          const pc = createPc(senderId);
           const remoteDesc = new RTCSessionDescription(msg.sdp!);
           await pc.setRemoteDescription(remoteDesc);
-          await flushPendingIce(pc);
+          await flushPendingIce(senderId, pc);
 
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
 
-          if (senderId) {
-            sendSignal({
-              type:     "ANSWER",
-              fromId:   myId,
-              toId:     senderId,
-              targetId: senderId,
-              sdp: {
-                type: pc.localDescription!.type,
-                sdp:  pc.localDescription!.sdp,
-              },
-            } as any);
-            console.log(`[WebRTC] Sent ANSWER to ${senderId}`);
-          }
+          sendSignal({
+            type:     "ANSWER",
+            fromId:   myId,
+            toId:     senderId,
+            targetId: senderId,
+            sdp: {
+              type: pc.localDescription!.type,
+              sdp:  pc.localDescription!.sdp,
+            },
+          } as any);
+          console.log(`[WebRTC] Sent ANSWER to ${senderId}`);
         } catch (err) {
-          console.error("[WebRTC] Failed handling OFFER:", err);
+          console.error(`[WebRTC] Failed handling OFFER from ${senderId}:`, err);
           setPeerStatus("failed");
         }
         break;
       }
 
       case "ANSWER": {
-        const pc = pcRef.current;
+        const pc = pcsRef.current.get(senderId);
         if (!pc || !msg.sdp) break;
         try {
           const remoteDesc = new RTCSessionDescription(msg.sdp);
           await pc.setRemoteDescription(remoteDesc);
-          await flushPendingIce(pc);
-          console.log("[WebRTC] Remote description applied from ANSWER");
+          await flushPendingIce(senderId, pc);
+          console.log(`[WebRTC] Remote description applied from ANSWER for ${senderId}`);
         } catch (err) {
-          console.error("[WebRTC] Failed applying ANSWER:", err);
+          console.error(`[WebRTC] Failed applying ANSWER from ${senderId}:`, err);
         }
         break;
       }
 
       case "ICE_CANDIDATE": {
-        const pc = pcRef.current;
         if (!msg.candidate) break;
+        const pc = pcsRef.current.get(senderId);
         if (!pc || !pc.remoteDescription) {
-          pendingIceRef.current.push(msg.candidate);
+          if (!pendingIceRef.current.has(senderId)) {
+            pendingIceRef.current.set(senderId, []);
+          }
+          pendingIceRef.current.get(senderId)!.push(msg.candidate);
           break;
         }
         try {
           await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
         } catch (e) {
-          console.warn("[WebRTC] ICE add error:", e);
+          console.warn(`[WebRTC] ICE add error for ${senderId}:`, e);
         }
         break;
       }
@@ -256,7 +288,14 @@ export function useWebRTC(
       default:
         break;
     }
-  }, [myId, sendSignal, createPc, hangup]);
+  }, [myId, sendSignal, createPc]);
 
-  return { peerStatus, dataChannel, initiateCall, onSignal, hangup };
+  return { 
+    peerStatus, 
+    dataChannel, 
+    getPeerDataChannel, 
+    initiateCall, 
+    onSignal, 
+    hangup 
+  };
 }

@@ -67,6 +67,22 @@ function handleClientConnection(ws, req) {
         const { roomId, device } = msg;
         if (!roomId || !device?.id) return;
 
+        // Clean up from previous room if switching rooms
+        if (currentRoomId && currentRoomId !== roomId && currentPeerId) {
+          const oldRoom = rooms.get(currentRoomId);
+          if (oldRoom) {
+            const oldPeer = oldRoom.peers.get(currentPeerId);
+            if (oldPeer && oldPeer.ws === ws) {
+              oldRoom.peers.delete(currentPeerId);
+              broadcast(oldRoom, { type: "PEER_LEFT", device: oldPeer.device }, currentPeerId);
+              if (oldRoom.peers.size === 0) {
+                rooms.delete(currentRoomId);
+                console.log(`[Unified Server] Old room ${currentRoomId} deleted (empty)`);
+              }
+            }
+          }
+        }
+
         currentPeerId = device.id;
         currentRoomId = roomId;
 
@@ -94,11 +110,16 @@ function handleClientConnection(ws, req) {
           const room = rooms.get(currentRoomId);
           if (room) {
             const peer = room.peers.get(currentPeerId);
-            room.peers.delete(currentPeerId);
-            if (peer) {
+            if (peer && peer.ws === ws) {
+              room.peers.delete(currentPeerId);
               broadcast(room, { type: "PEER_LEFT", device: peer.device }, currentPeerId);
+              if (room.peers.size === 0) {
+                rooms.delete(currentRoomId);
+                console.log(`[Unified Server] Room ${currentRoomId} deleted (empty)`);
+              }
             }
           }
+          currentRoomId = null;
         }
       } else {
         // Forward WebRTC signaling (OFFER, ANSWER, ICE_CANDIDATE, etc.) to target peer

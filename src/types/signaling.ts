@@ -1,12 +1,14 @@
-﻿// Client-side signaling message types (mirrors server/types.ts, but uses browser RTCSessionDescriptionInit)
+// Client-side signaling message types (mirrors server/types.ts, but uses browser RTCSessionDescriptionInit)
 export type SignalingMsgType =
   | "JOIN_ROOM"
+  | "LEAVE_ROOM"
   | "ROOM_JOINED"
   | "PEER_JOINED"
   | "PEER_LEFT"
   | "OFFER"
   | "ANSWER"
   | "ICE_CANDIDATE"
+  | "TRANSFER_DATA"
   | "ROOM_ERROR"
   | "PING"
   | "PONG";

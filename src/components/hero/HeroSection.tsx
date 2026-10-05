@@ -71,7 +71,7 @@ export default function HeroSection() {
             <Radio className="w-5 h-5 animate-pulse" />
             <span>Open Nearby Radar</span>
           </Link>
-          <Link href="/share?mode=qr" className="btn-glass w-full sm:w-auto text-base py-3.5 px-6">
+          <Link href="/share" className="btn-glass w-full sm:w-auto text-base py-3.5 px-6">
             <QrCode className="w-5 h-5 text-emerald-400" />
             <span>Scan QR Code</span>
           </Link>

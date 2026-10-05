@@ -1,20 +1,25 @@
 "use client";
 import React, { useRef, useState, useCallback } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { 
   Upload, FileText, Image as ImgIcon, Film, Package, 
   X, Send, ArrowRight, ShieldCheck, Zap, MessageSquare, 
-  Copy, Check, FileUp, Camera, Smartphone, Monitor, Laptop, Tablet, Radio
+  Copy, Check, FileUp, Camera, Smartphone, Monitor, Laptop, Tablet, Radio,
+  Users, CheckSquare, Square, Plus
 } from "lucide-react";
 import { formatBytes, formatSpeed, formatEta } from "@/lib/device";
 import type { DeviceInfo } from "@/types/signaling";
 import type { TransferProgress } from "@/hooks/useTransfer";
 
 interface Props {
-  selectedPeer: DeviceInfo | null;
-  onDeselectPeer: () => void;
+  selectedPeers?: DeviceInfo[];
+  selectedPeer?: DeviceInfo | null;
+  onDeselectPeer?: (peerId?: string) => void;
   peers?: DeviceInfo[];
   onSelectPeer?: (peer: DeviceInfo) => void;
+  onTogglePeer?: (peer: DeviceInfo) => void;
+  onSelectAllPeers?: () => void;
+  onClearPeers?: () => void;
   files: File[];
   onAddFiles: (files: File[]) => void;
   onRemoveFile: (index: number) => void;
@@ -54,10 +59,14 @@ function FileTypeBadge({ name }: { name: string }) {
 }
 
 export default function TransferPanel({
+  selectedPeers = [],
   selectedPeer,
   onDeselectPeer,
   peers = [],
   onSelectPeer,
+  onTogglePeer,
+  onSelectAllPeers,
+  onClearPeers,
   files,
   onAddFiles,
   onRemoveFile,
@@ -75,6 +84,23 @@ export default function TransferPanel({
   const [textMessage, setTextMessage] = useState("");
   const [isSendingText, setIsSendingText] = useState(false);
   const [textSentSuccess, setTextSentSuccess] = useState(false);
+
+  // Active targets: union of selectedPeers and selectedPeer
+  const targets: DeviceInfo[] = selectedPeers.length > 0 
+    ? selectedPeers 
+    : selectedPeer 
+    ? [selectedPeer] 
+    : [];
+
+  const isPeerActive = (p: DeviceInfo) => targets.some(t => t.id === p.id);
+
+  const handlePeerClick = (peer: DeviceInfo) => {
+    if (onTogglePeer) {
+      onTogglePeer(peer);
+    } else if (onSelectPeer) {
+      onSelectPeer(peer);
+    }
+  };
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -101,7 +127,7 @@ export default function TransferPanel({
   };
 
   const handleSendDirectText = async () => {
-    if (!textMessage.trim() || !selectedPeer || isSendingText) return;
+    if (!textMessage.trim() || targets.length === 0 || isSendingText) return;
     setIsSendingText(true);
     try {
       if (onSendText) {
@@ -130,57 +156,110 @@ export default function TransferPanel({
 
   return (
     <div className="glass-panel p-5 sm:p-6 flex flex-col gap-4">
-      {/* ── Target Device Header ── */}
-      <div className="flex flex-col gap-2 pb-3 border-b border-slate-800/80">
+      {/* ── Target Device(s) Header ── */}
+      <div className="flex flex-col gap-2.5 pb-3 border-b border-slate-800/80">
         <div className="flex items-center justify-between">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Target Device</span>
-          {selectedPeer && (
-            <button
-              onClick={onDeselectPeer}
-              className="text-xs text-slate-400 hover:text-slate-200 px-2.5 py-1 rounded-lg bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 transition"
-            >
-              Change
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              Target Devices
+            </span>
+            {targets.length > 0 && (
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                {targets.length} Selected
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {peers.length > 1 && onSelectAllPeers && (
+              <button
+                type="button"
+                onClick={targets.length === peers.length ? onClearPeers : onSelectAllPeers}
+                className="text-[11px] font-semibold text-cyan-400 hover:text-cyan-300 transition"
+              >
+                {targets.length === peers.length ? "Deselect All" : "Select All"}
+              </button>
+            )}
+
+            {targets.length > 0 && onClearPeers && (
+              <button
+                type="button"
+                onClick={onClearPeers}
+                className="text-[11px] text-slate-400 hover:text-rose-400 transition"
+              >
+                Clear
+              </button>
+            )}
+          </div>
         </div>
 
-        {selectedPeer ? (
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="font-bold text-base text-slate-100">{selectedPeer.name}</span>
-            <span className="text-xs px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 font-medium capitalize">
-              {selectedPeer.type}
-            </span>
+        {/* Selected Devices Chips List */}
+        {targets.length > 0 ? (
+          <div className="flex flex-wrap gap-2 mt-1">
+            {targets.map((peer) => (
+              <div
+                key={peer.id}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/90 border border-emerald-500/40 text-xs text-slate-100 shadow-sm"
+              >
+                {getDeviceIcon(peer.type)}
+                <span className="font-semibold text-emerald-300 max-w-[120px] truncate">{peer.name}</span>
+                <button
+                  type="button"
+                  onClick={() => onDeselectPeer ? onDeselectPeer(peer.id) : onTogglePeer?.(peer)}
+                  className="p-0.5 rounded hover:bg-slate-800 text-slate-400 hover:text-rose-400 transition ml-0.5"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
           </div>
         ) : (
-          <div className="flex flex-col gap-2 mt-1">
-            <p className="text-xs text-amber-400/90 font-medium flex items-center gap-1.5">
-              <span>⚠️ Choose recipient device:</span>
-            </p>
+          <div className="p-2.5 rounded-xl bg-slate-900/50 border border-slate-800 text-xs text-amber-400/90 flex items-center gap-2">
+            <span>⚠️ Tap devices below to choose who receives your transfer</span>
+          </div>
+        )}
 
-            {peers.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {peers.map((peer) => (
+        {/* Available Peer Checkbox Cards */}
+        {peers.length > 0 && (
+          <div className="flex flex-col gap-1.5 mt-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Discovered Devices ({peers.length}):
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {peers.map((peer) => {
+                const active = isPeerActive(peer);
+                return (
                   <button
                     key={peer.id}
-                    onClick={() => onSelectPeer?.(peer)}
-                    className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-700 hover:border-emerald-500/50 hover:bg-slate-850 flex items-center gap-2.5 text-left transition group"
+                    type="button"
+                    onClick={() => handlePeerClick(peer)}
+                    className={`p-2.5 rounded-xl border flex items-center justify-between transition group text-left ${
+                      active
+                        ? "bg-emerald-500/15 border-emerald-500/50 text-slate-100 shadow-sm"
+                        : "bg-slate-900/70 border-slate-800 hover:border-slate-700 text-slate-300"
+                    }`}
                   >
-                    <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition">
-                      {getDeviceIcon(peer.type)}
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                        active ? "bg-emerald-500/30 text-emerald-300" : "bg-slate-800 text-slate-400"
+                      }`}>
+                        {getDeviceIcon(peer.type)}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold truncate">{peer.name}</p>
+                        <p className="text-[10px] text-slate-400 capitalize">{peer.type}</p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-slate-200 truncate">{peer.name}</p>
-                      <p className="text-[10px] text-emerald-400 font-medium capitalize">Tap to select</p>
+
+                    <div className={`w-5 h-5 rounded-md flex items-center justify-center border transition ${
+                      active ? "bg-emerald-500 border-emerald-400 text-slate-950" : "border-slate-700 text-transparent"
+                    }`}>
+                      <Check className="w-3.5 h-3.5 stroke-[3]" />
                     </div>
                   </button>
-                ))}
-              </div>
-            ) : (
-              <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-400 text-center">
-                No other devices in this room yet. Open AnyDrop on your other phone or laptop!
-              </div>
-            )}
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -343,7 +422,7 @@ export default function TransferPanel({
             <button
               type="button"
               onClick={handleSendDirectText}
-              disabled={!textMessage.trim() || !selectedPeer || isSendingText}
+              disabled={!textMessage.trim() || targets.length === 0 || isSendingText}
               className={`py-2 px-4 rounded-xl text-xs font-semibold border transition flex items-center gap-1.5 active:scale-95 ${
                 textSentSuccess
                   ? "bg-emerald-500 text-slate-950 border-emerald-400 font-bold"
@@ -409,29 +488,31 @@ export default function TransferPanel({
         <button
           id="send-files-btn"
           onClick={onSend}
-          disabled={!selectedPeer || files.length === 0 || isSending}
+          disabled={targets.length === 0 || files.length === 0 || isSending}
           className="btn-primary-glow w-full py-3.5 rounded-2xl text-base justify-center shadow-lg active:scale-98 transition disabled:opacity-40"
         >
           <Zap className={`w-5 h-5 ${isSending ? "animate-pulse" : ""}`} />
           <span>
             {isSending
               ? peerStatus === "connecting"
-                ? `Connecting to ${selectedPeer?.name || "Device"}...`
+                ? `Connecting to ${targets.length > 1 ? `${targets.length} Devices` : targets[0]?.name || "Device"}...`
                 : progress && progress.transferred === 0
-                ? `Waiting for ${selectedPeer?.name || "Peer"} to accept...`
+                ? `Waiting for ${targets.length > 1 ? `${targets.length} Devices` : targets[0]?.name || "Peer"} to accept...`
                 : "Sending..."
-              : !selectedPeer
-              ? "Select Target Device to Send"
+              : targets.length === 0
+              ? "Select Target Device(s) to Send"
               : files.length === 0
               ? "Add Files to Send"
-              : `Send ${files.length} File${files.length > 1 ? "s" : ""} to ${selectedPeer.name}`}
+              : `Send ${files.length} File${files.length > 1 ? "s" : ""} to ${
+                  targets.length === 1 ? targets[0].name : `${targets.length} Devices`
+                }`}
           </span>
         </button>
       ) : (
         <button
           id="send-text-btn"
           onClick={handleSendDirectText}
-          disabled={!selectedPeer || !textMessage.trim() || isSendingText}
+          disabled={targets.length === 0 || !textMessage.trim() || isSendingText}
           className={`btn-primary-glow w-full py-3.5 rounded-2xl text-base justify-center shadow-lg active:scale-98 transition disabled:opacity-40 ${
             textSentSuccess ? "!bg-emerald-500 !text-slate-950 font-bold" : ""
           }`}
@@ -439,7 +520,7 @@ export default function TransferPanel({
           {textSentSuccess ? (
             <>
               <Check className="w-5 h-5" />
-              <span>Message Sent to {selectedPeer?.name}!</span>
+              <span>Message Sent to {targets.length === 1 ? targets[0].name : `${targets.length} Devices`}!</span>
             </>
           ) : isSendingText ? (
             <>
@@ -450,11 +531,11 @@ export default function TransferPanel({
             <>
               <Send className="w-5 h-5" />
               <span>
-                {!selectedPeer
-                  ? "Select Target Device to Send"
+                {targets.length === 0
+                  ? "Select Target Device(s) to Send"
                   : !textMessage.trim()
                   ? "Type a Message or Link to Send"
-                  : `Send Message to ${selectedPeer.name}`}
+                  : `Send Message to ${targets.length === 1 ? targets[0].name : `${targets.length} Devices`}`}
               </span>
             </>
           )}

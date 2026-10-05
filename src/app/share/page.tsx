@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Zap, QrCode, ShieldCheck, Download, Radio, Send, FileCheck, Copy, Check,
   Clock, ArrowRight, Smartphone, RefreshCw, Sparkles, Inbox, Plus,
-  MessageSquare, ExternalLink, Globe
+  MessageSquare, ExternalLink, Globe, KeyRound
 } from "lucide-react";
 import { formatBytes } from "@/lib/device";
 import { useDevice }   from "@/hooks/useDevice";
@@ -18,6 +18,7 @@ import TransferPanel   from "@/components/transfer/TransferPanel";
 import IncomingTransferModal from "@/components/transfer/IncomingTransferModal";
 import IncomingTextModal from "@/components/transfer/IncomingTextModal";
 import QrModal               from "@/components/transfer/QrModal";
+import RoomModal             from "@/components/transfer/RoomModal";
 import type { DeviceInfo }   from "@/types/signaling";
 
 type MobileTab = "radar" | "transfer" | "received" | "room";
@@ -26,13 +27,14 @@ const DEFAULT_ROOM = "ANYDROP-MAIN-01";
 function ShareAppContent() {
   const searchParams = useSearchParams();
   const urlRoom = searchParams.get("room");
-  const modeParam = searchParams.get("mode");
   const { device, setName } = useDevice();
 
   const [mobileTab, setMobileTab] = useState<MobileTab>("radar");
-  const [selectedPeer, setSelectedPeer] = useState<DeviceInfo | null>(null);
+  const [selectedPeers, setSelectedPeers] = useState<DeviceInfo[]>([]);
   const [files, setFiles] = useState<File[]>([]);
-  const [showQR, setShowQR] = useState(modeParam === "qr");
+  // showQR defaults to false so QR modal NEVER pops up automatically upon opening!
+  const [showQR, setShowQR] = useState(false);
+  const [showRoomModal, setShowRoomModal] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
   const [customRoomInput, setCustomRoomInput] = useState("");
@@ -42,7 +44,7 @@ function ShareAppContent() {
   const dcRef = useRef<RTCDataChannel | null>(null);
   const [copiedTextId, setCopiedTextId] = useState<string | null>(null);
 
-  const { room, joinRoom, sendSignal, onSignal, reconnect } = useRoom(device);
+  const { room, joinRoom, leaveRoom, createRoom, sendSignal, onSignal, reconnect } = useRoom(device);
   const { 
     progress, 
     incomingRequest, 
@@ -62,17 +64,23 @@ function ShareAppContent() {
   const { 
     peerStatus, 
     dataChannel, 
+    getPeerDataChannel,
     initiateCall, 
     onSignal: webRtcOnSignal, 
     hangup 
   } = useWebRTC(
     device?.id, 
     sendSignal,
-    (dc) => { dcRef.current = dc; },
-    (data) => { if (dcRef.current) handleDcMessage(dcRef.current, data); }
+    (dc, peerId) => { dcRef.current = dc; },
+    (data, peerId) => { if (dcRef.current) handleDcMessage(dcRef.current, data); }
   );
 
   useEffect(() => { dcRef.current = dataChannel; }, [dataChannel]);
+
+  // Keep selectedPeers filtered to only active peers in room
+  useEffect(() => {
+    setSelectedPeers(prev => prev.filter(p => room.peers.some(rp => rp.id === p.id)));
+  }, [room.peers]);
 
   // Route incoming signaling messages: transfer relay payloads go to useTransfer, WebRTC messages go to useWebRTC
   useEffect(() => {
@@ -106,10 +114,33 @@ function ShareAppContent() {
     setEditingName(false);
   };
 
-  const handleSelectPeer = (peer: DeviceInfo) => {
-    setSelectedPeer(peer);
+  const handleTogglePeer = (peer: DeviceInfo) => {
+    setSelectedPeers(prev => {
+      const exists = prev.some(p => p.id === peer.id);
+      if (exists) {
+        return prev.filter(p => p.id !== peer.id);
+      } else {
+        return [...prev, peer];
+      }
+    });
     if (window.innerWidth < 1024) {
       setMobileTab("transfer");
+    }
+  };
+
+  const handleSelectAllPeers = () => {
+    setSelectedPeers(room.peers);
+  };
+
+  const handleClearPeers = () => {
+    setSelectedPeers([]);
+  };
+
+  const handleDeselectPeer = (peerId?: string) => {
+    if (peerId) {
+      setSelectedPeers(prev => prev.filter(p => p.id !== peerId));
+    } else {
+      setSelectedPeers([]);
     }
   };
 
@@ -125,49 +156,61 @@ function ShareAppContent() {
     setFiles([]);
   };
 
+  // ── Send Files to ALL selected peers simultaneously ──
   const handleStartSend = async () => {
-    if (!selectedPeer || files.length === 0 || !device) return;
+    if (selectedPeers.length === 0 || files.length === 0 || !device) return;
     setIsSending(true);
 
-    const activeDc = dataChannel || dcRef.current;
-    
-    // Also initiate WebRTC in the background if not already connected
-    if (!activeDc || activeDc.readyState !== "open") {
-      try {
-        initiateCall(selectedPeer.id);
-      } catch {}
+    // Warm up WebRTC connections for each selected peer in background
+    for (const peer of selectedPeers) {
+      const activeDc = getPeerDataChannel(peer.id);
+      if (!activeDc || activeDc.readyState !== "open") {
+        try {
+          initiateCall(peer.id);
+        } catch {}
+      }
     }
 
-    console.log(`[Share] Starting send of ${files.length} file(s) to ${selectedPeer.name}...`);
+    console.log(`[Share] Starting multi-send of ${files.length} file(s) to ${selectedPeers.length} peer(s)...`);
     try {
-      await sendFiles(
-        selectedPeer.id,
-        files,
-        device.name,
-        activeDc,
-        sendSignal
+      await Promise.allSettled(
+        selectedPeers.map(peer => {
+          const activeDc = getPeerDataChannel(peer.id) || dcRef.current;
+          return sendFiles(
+            peer.id,
+            files,
+            device.name,
+            activeDc,
+            sendSignal
+          );
+        })
       );
     } catch (err) {
-      console.error("[Share] Error during sendFiles:", err);
+      console.error("[Share] Error during multi-sendFiles:", err);
     } finally {
       setIsSending(false);
     }
   };
 
+  // ── Send Text/Link to ALL selected peers simultaneously ──
   const handleSendTextDirect = async (text: string) => {
-    if (!selectedPeer || !device) return;
-    const activeDc = dataChannel || dcRef.current;
-    if (!activeDc || activeDc.readyState !== "open") {
-      try {
-        initiateCall(selectedPeer.id);
-      } catch {}
-    }
-    await sendTextMessage(
-      selectedPeer.id,
-      text,
-      device.name,
-      activeDc,
-      sendSignal
+    if (selectedPeers.length === 0 || !device) return;
+    await Promise.allSettled(
+      selectedPeers.map(peer => {
+        const activeDc = getPeerDataChannel(peer.id) || dcRef.current;
+        if (!activeDc || activeDc.readyState !== "open") {
+          try {
+            initiateCall(peer.id);
+          } catch {}
+        }
+        return sendTextMessage(
+          peer.id,
+          text,
+          device.name,
+          activeDc,
+          sendSignal
+        );
+      })
     );
   };
 
@@ -227,6 +270,14 @@ function ShareAppContent() {
         roomId={room.roomId}
         onClose={() => setShowQR(false)}
       />
+      <RoomModal
+        open={showRoomModal}
+        currentRoomId={room.roomId}
+        peerCount={room.peers.length}
+        onJoinRoom={(roomId) => joinRoom(roomId)}
+        onCreateRoom={createRoom}
+        onClose={() => setShowRoomModal(false)}
+      />
 
       {/* ── Top Navigation Bar ── */}
       <header className="sticky top-0 z-40 border-b border-slate-800/80 bg-slate-950/85 backdrop-blur-xl">
@@ -246,12 +297,19 @@ function ShareAppContent() {
             </div>
           </Link>
 
-          {/* Room Pill with QR & Copy */}
-          <div className="flex items-center gap-1.5 sm:gap-2 bg-slate-900/90 border border-slate-700/80 rounded-full px-2.5 sm:px-3 py-1.5 shadow-sm max-w-[210px] sm:max-w-none">
-            <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse flex-shrink-0" />
-            <span className="text-xs font-mono font-medium text-slate-300 truncate">
-              {room.roomId ?? "Connecting…"}
-            </span>
+          {/* Room Pill with Switcher, QR & Copy */}
+          <div className="flex items-center gap-1.5 sm:gap-2 bg-slate-900/90 border border-slate-700/80 rounded-full px-2.5 sm:px-3 py-1.5 shadow-sm max-w-[240px] sm:max-w-none">
+            <button
+              onClick={() => setShowRoomModal(true)}
+              className="flex items-center gap-1.5 hover:text-emerald-300 transition text-left group min-w-0"
+              title="Click to Switch or Create Room"
+            >
+              <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse flex-shrink-0" />
+              <span className="text-xs font-mono font-bold text-slate-200 group-hover:text-emerald-400 truncate">
+                {room.roomId ?? "Connecting…"}
+              </span>
+            </button>
+            <div className="w-[1px] h-3 bg-slate-700 mx-0.5" />
             <button
               onClick={copyRoom}
               title="Copy Room ID"
@@ -390,7 +448,7 @@ function ShareAppContent() {
           <div className="glass-panel p-5 flex flex-col gap-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div className="flex items-center gap-2">
-                <QrCode className="w-5 h-5 text-emerald-400" />
+                <Radio className="w-5 h-5 text-emerald-400" />
                 <h3 className="font-bold text-base text-slate-100">Room & Pairing</h3>
               </div>
               <button
@@ -420,8 +478,17 @@ function ShareAppContent() {
               </p>
             </div>
 
+            <button
+              type="button"
+              onClick={createRoom}
+              className="py-2.5 px-4 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-semibold flex items-center justify-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Generate New Private Room</span>
+            </button>
+
             {/* Join Another Room Form */}
-            <form onSubmit={handleJoinCustomRoom} className="flex flex-col gap-2 mt-2">
+            <form onSubmit={handleJoinCustomRoom} className="flex flex-col gap-2 mt-1">
               <label className="text-xs font-semibold text-slate-300">
                 Join a different Room:
               </label>
@@ -430,7 +497,7 @@ function ShareAppContent() {
                   value={customRoomInput}
                   onChange={(e) => setCustomRoomInput(e.target.value)}
                   placeholder="Enter Room Code (e.g. ANYDROP-ROOM-2)"
-                  className="flex-1 rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-slate-100 uppercase placeholder:normal-case focus:outline-none focus:border-emerald-500"
+                  className="flex-1 rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-slate-100 uppercase placeholder:normal-case font-mono focus:outline-none focus:border-emerald-500"
                 />
                 <button
                   type="submit"
@@ -455,17 +522,22 @@ function ShareAppContent() {
                     Nearby Devices Radar
                   </h2>
                 </div>
-                <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
-                  {room.peers.length} discovered
-                </span>
+                <button
+                  onClick={() => setShowRoomModal(true)}
+                  className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 font-medium transition"
+                >
+                  {room.peers.length} in room · Switch
+                </button>
               </div>
 
-              {/* The Interactive Sonar Radar */}
+              {/* The Interactive Sonar Radar with Multi-Selection */}
               <DeviceRadar
                 myDevice={device}
                 peers={room.peers}
-                selectedPeer={selectedPeer}
-                onSelectPeer={handleSelectPeer}
+                selectedPeers={selectedPeers}
+                onTogglePeer={handleTogglePeer}
+                onSelectAllPeers={handleSelectAllPeers}
+                onClearPeers={handleClearPeers}
                 onOpenQr={() => setShowQR(true)}
                 roomId={room.roomId}
                 onEditName={() => {
@@ -474,6 +546,7 @@ function ShareAppContent() {
                 }}
                 wsStatus={room.wsStatus}
                 onReconnect={reconnect}
+                onOpenRoomModal={() => setShowRoomModal(true)}
               />
             </div>
           </div>
@@ -481,10 +554,12 @@ function ShareAppContent() {
           {/* Column 2: Transfer Cockpit (Desktop always visible, Mobile when tab=transfer) */}
           <div className={`lg:col-span-6 flex flex-col gap-4 ${mobileTab !== "transfer" ? "hidden lg:flex" : "flex"}`}>
             <TransferPanel
-              selectedPeer={selectedPeer}
-              onDeselectPeer={() => setSelectedPeer(null)}
+              selectedPeers={selectedPeers}
+              onDeselectPeer={handleDeselectPeer}
               peers={room.peers}
-              onSelectPeer={handleSelectPeer}
+              onTogglePeer={handleTogglePeer}
+              onSelectAllPeers={handleSelectAllPeers}
+              onClearPeers={handleClearPeers}
               files={files}
               onAddFiles={handleAddFiles}
               onRemoveFile={handleRemoveFile}
